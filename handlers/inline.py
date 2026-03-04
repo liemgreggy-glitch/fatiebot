@@ -54,8 +54,8 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 InlineQueryResultCachedPhoto(
                     id=str(msg["id"]),
                     photo_file_id=random_image["file_id"],
-                    caption=display_text,
-                    parse_mode="HTML",
+                    caption=display_text if display_text else None,
+                    parse_mode="HTML" if display_text else None,
                     reply_markup=reply_markup,
                 )
             )
