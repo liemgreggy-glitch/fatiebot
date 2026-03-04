@@ -7,7 +7,7 @@ from typing import List
 from telegram import (
     Update,
     InlineQueryResultArticle,
-    InlineQueryResultPhoto,
+    InlineQueryResultCachedPhoto,
     InputTextMessageContent,
 )
 from telegram.ext import ContextTypes
@@ -35,7 +35,7 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
     results: List = []
     for msg in messages:
-        # 优先使用变体，否则使用原文
+        # 随机选择文案变体
         variants = database.get_variants(msg["id"])
         if variants:
             display_text = random.choice(variants)
@@ -46,34 +46,49 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         preview = (display_text or "（无文本）")[:100]
         description = f"🔑 {msg['key']} | {preview}"
 
-        image_url = msg.get("image_url")
-        # 过滤掉 tg:// 协议的 file_id（inline 模式不支持）
-        if image_url and image_url.startswith("tg://"):
-            image_url = None
-
-        if image_url:
+        # 随机选择图片变体
+        image_variants = database.get_message_image_variants(msg["id"])
+        if image_variants:
+            random_image = random.choice(image_variants)
             results.append(
-                InlineQueryResultPhoto(
+                InlineQueryResultCachedPhoto(
                     id=str(msg["id"]),
-                    photo_url=image_url,
-                    thumbnail_url=image_url,
-                    title=f"📨 {msg['key']}",
-                    description=preview,
+                    photo_file_id=random_image["file_id"],
                     caption=display_text,
+                    parse_mode="HTML",
                     reply_markup=reply_markup,
                 )
             )
         else:
-            results.append(
-                InlineQueryResultArticle(
-                    id=str(msg["id"]),
-                    title=f"📨 {msg['key']}",
-                    description=description,
-                    input_message_content=InputTextMessageContent(
-                        message_text=display_text or "（无内容）",
-                    ),
-                    reply_markup=reply_markup,
+            # 回退：使用旧的 image_url（如有）
+            image_url = msg.get("image_url")
+            if image_url and image_url.startswith("tg://"):
+                image_url = None
+
+            if image_url:
+                from telegram import InlineQueryResultPhoto
+                results.append(
+                    InlineQueryResultPhoto(
+                        id=str(msg["id"]),
+                        photo_url=image_url,
+                        thumbnail_url=image_url,
+                        title=f"📨 {msg['key']}",
+                        description=preview,
+                        caption=display_text,
+                        reply_markup=reply_markup,
+                    )
                 )
-            )
+            else:
+                results.append(
+                    InlineQueryResultArticle(
+                        id=str(msg["id"]),
+                        title=f"📨 {msg['key']}",
+                        description=description,
+                        input_message_content=InputTextMessageContent(
+                            message_text=display_text or "（无内容）",
+                        ),
+                        reply_markup=reply_markup,
+                    )
+                )
 
     await update.inline_query.answer(results, cache_time=0)

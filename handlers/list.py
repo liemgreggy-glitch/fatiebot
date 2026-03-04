@@ -57,15 +57,24 @@ async def list_page_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 def _build_message_detail_text(msg: dict, variants: list) -> str:
     """构建消息详情文本"""
     lines = [f"🔑 <b>密钥</b>：<code>{msg['key']}</code>"]
-    if msg.get("text"):
-        lines.append(f"\n📝 <b>文字</b>：\n{msg['text']}")
-    if msg.get("image_url"):
-        lines.append(f"\n🖼 <b>图片</b>：已添加")
-    if msg.get("buttons"):
-        lines.append(f"\n🔘 <b>按钮</b>：已添加")
-    lines.append(f"\n🕐 <b>创建时间</b>：{msg['created_at'][:19]}")
+
     if variants:
-        lines.append(f"\n🤖 <b>AI 变体</b>：{len(variants)} 条")
+        lines.append(f"\n📝 <b>文案变体</b> (共 {len(variants)} 条):\n")
+        for idx, variant in enumerate(variants, 1):
+            preview = variant[:60] + "..." if len(variant) > 60 else variant
+            lines.append(f"<b>{idx}.</b> {preview}\n")
+    elif msg.get("text"):
+        lines.append(f"\n📝 <b>文字</b>：\n{msg['text']}")
+
+    image_count = database.get_image_variant_count(msg["id"])
+    if image_count:
+        lines.append(f"\n🖼 <b>图片变体</b>：{image_count} 张")
+    elif msg.get("image_url"):
+        lines.append("\n🖼 <b>图片</b>：已添加")
+
+    if msg.get("buttons"):
+        lines.append("\n🔘 <b>按钮</b>：已添加")
+    lines.append(f"\n🕐 <b>创建时间</b>：{msg['created_at'][:19]}")
     return "\n".join(lines)
 
 

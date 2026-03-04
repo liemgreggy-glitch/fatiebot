@@ -1,4 +1,4 @@
-"""AI 服务模块：封装 Pollinations.AI 的文本和图片生成接口"""
+"""AI 服务模块：封装 Pollinations.AI 的文本生成接口"""
 
 import logging
 import urllib.parse
@@ -8,7 +8,6 @@ import requests
 
 from config import (
     POLLINATIONS_TEXT_API,
-    POLLINATIONS_IMAGE_API,
     REQUEST_TIMEOUT,
     MAX_VARIANTS,
 )
@@ -21,21 +20,7 @@ def rewrite_text(original_text: str) -> List[str]:
     使用 Pollinations.AI 对原文进行改写，生成最多 MAX_VARIANTS 条变体。
     变体之间用 ||| 分隔。
     """
-    prompt = (
-        f"请改写以下文字，保持原意但使用不同的表述方式。"
-        f"生成{MAX_VARIANTS}个不同版本，每个版本之间只用|||分隔，不要有其他多余内容：\n{original_text}"
-    )
-    encoded = urllib.parse.quote(prompt, safe="")
-    url = f"{POLLINATIONS_TEXT_API}/{encoded}"
-    try:
-        response = requests.get(url, timeout=REQUEST_TIMEOUT)
-        response.raise_for_status()
-        raw = response.text.strip()
-        variants = [v.strip() for v in raw.split("|||") if v.strip()]
-        return variants[:MAX_VARIANTS]
-    except requests.RequestException as e:
-        logger.error("AI 改写请求失败：%s", e)
-        return []
+    return generate_text_variants(original_text, count=MAX_VARIANTS)
 
 
 def generate_ad_text(description: str) -> Optional[str]:
@@ -56,10 +41,39 @@ def generate_ad_text(description: str) -> Optional[str]:
         return None
 
 
-def generate_image_url(description: str) -> str:
+def generate_text_variants(original_text: str, count: int = 10) -> List[str]:
     """
-    根据描述生成 Pollinations.AI 图片 URL（直接返回 URL，无需下载）。
+    生成文本变体。
+
+    Args:
+        original_text: 原始文本
+        count: 生成数量
+
+    Returns:
+        list: 变体列表
     """
-    encoded = urllib.parse.quote(description, safe="")
-    url = f"{POLLINATIONS_IMAGE_API}/{encoded}?width=800&height=600&nologo=true"
-    return url
+    prompt = (
+        f"请将以下文字改写成{count}个不同版本，保持核心意思不变。\n"
+        f"要求：\n"
+        f"1. 每个版本用|||分隔\n"
+        f"2. 不要添加编号\n"
+        f"3. 每个版本都要完整且流畅\n"
+        f"4. 使用不同的词汇和句式\n\n"
+        f"原文：{original_text}\n\n"
+        f"请输出{count}个版本："
+    )
+    encoded = urllib.parse.quote(prompt, safe="")
+    url = f"{POLLINATIONS_TEXT_API}/{encoded}"
+    try:
+        response = requests.get(url, timeout=REQUEST_TIMEOUT * 2)  # variant generation needs more time
+        response.raise_for_status()
+        raw = response.text.strip()
+        logger.info("AI 返回: %s", raw[:200])
+        variants = [v.strip() for v in raw.split("|||") if v.strip()]
+        if len(variants) < 3:
+            variants = [v.strip() for v in raw.split("\n") if v.strip() and len(v) > 10]
+        logger.info("成功生成 %d 条变体", len(variants))
+        return variants[:count]
+    except requests.RequestException as e:
+        logger.error("生成文案变体失败：%s", e)
+        return []
