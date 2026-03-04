@@ -72,17 +72,29 @@ async def _rewrite_message(query, message_id: int) -> None:
             reply_markup=main_menu_keyboard(),
         )
         return
-    await query.edit_message_text("⏳ AI 改写中，请稍候...")
-    variants = ai_service.rewrite_text(msg["text"])
+    await query.edit_message_text("⏳ AI 改写中（可能需要30-60秒）...")
+    variants = ai_service.generate_text_variants(msg["text"], count=10)
     if not variants:
         await query.edit_message_text(
-            "❌ AI 改写失败，请稍后重试。",
+            "❌ AI 改写失败，请稍后重试。\n\n"
+            "可能原因：\n"
+            "• AI 服务暂时不可用\n"
+            "• 网络超时\n"
+            "• 文本内容过长\n\n"
+            "💡 建议稍后重试",
             reply_markup=rewrite_result_keyboard(message_id),
         )
         return
-    database.save_variants(message_id, variants)
-    await query.answer(
-        f"✅ 已生成 {len(variants)} 条变体！每次发送将随机选择。",
-        show_alert=True,
+    database.delete_message_variants(message_id)
+    for variant in variants:
+        database.add_message_variant(message_id, variant)
+    import random
+    sample = random.choice(variants)
+    await query.edit_message_text(
+        f"✅ <b>AI 改写成功！</b>\n\n"
+        f"📊 共生成 <b>{len(variants)}</b> 条变体\n"
+        f"🎲 每次发送将随机选择\n\n"
+        f"<b>示例：</b>\n{sample}",
+        parse_mode="HTML",
+        reply_markup=rewrite_result_keyboard(message_id),
     )
-    await show_message_detail(query, message_id)

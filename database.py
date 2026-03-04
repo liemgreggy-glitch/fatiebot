@@ -43,6 +43,17 @@ def init_db() -> None:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
             );
+
+            CREATE TABLE IF NOT EXISTS message_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
+                file_id TEXT NOT NULL,
+                image_index INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_message_images ON message_images(message_id);
         """)
     logger.info("数据库初始化完成")
 
@@ -235,3 +246,78 @@ def search_user_messages(user_id: int, query: str) -> List[Dict[str, Any]]:
     except sqlite3.Error as e:
         logger.error("搜索消息失败：%s", e)
         return []
+
+
+def add_message_variant(message_id: int, variant_text: str) -> bool:
+    """添加单条消息变体"""
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT INTO message_variants (message_id, variant_text) VALUES (?, ?)",
+                (message_id, variant_text),
+            )
+        return True
+    except sqlite3.Error as e:
+        logger.error("添加变体失败：%s", e)
+        return False
+
+
+def get_message_variants(message_id: int) -> List[str]:
+    """获取消息的所有文案变体（get_variants 的别名）"""
+    return get_variants(message_id)
+
+
+def delete_message_variants(message_id: int) -> bool:
+    """删除消息的所有文案变体"""
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "DELETE FROM message_variants WHERE message_id = ?",
+                (message_id,),
+            )
+        return True
+    except sqlite3.Error as e:
+        logger.error("删除变体失败：%s", e)
+        return False
+
+
+def save_image_variant(message_id: int, file_id: str, image_index: int) -> bool:
+    """保存单张图片变体"""
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT INTO message_images (message_id, file_id, image_index) VALUES (?, ?, ?)",
+                (message_id, file_id, image_index),
+            )
+        return True
+    except sqlite3.Error as e:
+        logger.error("保存图片变体失败：%s", e)
+        return False
+
+
+def get_message_image_variants(message_id: int) -> List[Dict[str, Any]]:
+    """获取消息的所有图片变体"""
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT file_id, image_index FROM message_images WHERE message_id = ? ORDER BY image_index",
+                (message_id,),
+            ).fetchall()
+            return [{"file_id": row["file_id"], "index": row["image_index"]} for row in rows]
+    except sqlite3.Error as e:
+        logger.error("获取图片变体失败：%s", e)
+        return []
+
+
+def get_image_variant_count(message_id: int) -> int:
+    """获取图片变体数量"""
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM message_images WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+            return row["cnt"] if row else 0
+    except sqlite3.Error as e:
+        logger.error("获取图片数量失败：%s", e)
+        return 0

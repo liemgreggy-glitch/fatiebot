@@ -27,7 +27,6 @@ MAX_VARIANTS: int = 10
 
 # Pollinations.AI API 端点
 POLLINATIONS_TEXT_API: str = "https://text.pollinations.ai"
-POLLINATIONS_IMAGE_API: str = "https://image.pollinations.ai/prompt"
 
 # 请求超时（秒）
 REQUEST_TIMEOUT: int = 30
