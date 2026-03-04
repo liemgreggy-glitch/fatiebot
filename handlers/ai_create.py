@@ -3,6 +3,7 @@
 import logging
 
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import (
     ContextTypes,
     ConversationHandler,
@@ -104,20 +105,29 @@ async def save_ai_message(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     key = generate_key()
     msg_id = database.create_message(user_id, key, text, image_url)
     if msg_id:
-        await query.edit_message_caption(
-            f"✅ <b>AI 消息已保存！</b>\n\n"
-            f"🔑 密钥：<code>{key}</code>\n\n"
-            f"💡 在任意聊天中输入 @机器人用户名 {key} 即可发送此消息。",
-            parse_mode="HTML",
-            reply_markup=main_menu_keyboard(),
-        )
+        try:
+            await query.edit_message_caption(
+                f"✅ <b>AI 消息已保存！</b>\n\n"
+                f"🔑 密钥：<code>{key}</code>\n\n"
+                f"💡 在任意聊天中输入 @机器人用户名 {key} 即可发送此消息。",
+                parse_mode="HTML",
+                reply_markup=main_menu_keyboard(),
+            )
+        except BadRequest:
+            await query.edit_message_text(
+                f"✅ <b>AI 消息已保存！</b>\n\n"
+                f"🔑 密钥：<code>{key}</code>\n\n"
+                f"💡 在任意聊天中输入 @机器人用户名 {key} 即可发送此消息。",
+                parse_mode="HTML",
+                reply_markup=main_menu_keyboard(),
+            )
     else:
         try:
             await query.edit_message_caption(
                 "❌ 保存失败，请稍后重试。",
                 reply_markup=main_menu_keyboard(),
             )
-        except Exception:
+        except BadRequest:
             await query.edit_message_text(
                 "❌ 保存失败，请稍后重试。",
                 reply_markup=main_menu_keyboard(),

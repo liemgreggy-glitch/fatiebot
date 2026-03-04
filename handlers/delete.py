@@ -1,13 +1,13 @@
 """删除消息和 AI 改写处理器"""
 
 import logging
-import random
 
 from telegram import Update
 from telegram.ext import ContextTypes
 
 import database
 import ai_service
+from handlers.list import show_message_detail
 from utils.keyboards import (
     delete_confirm_keyboard,
     main_menu_keyboard,
@@ -81,11 +81,8 @@ async def _rewrite_message(query, message_id: int) -> None:
         )
         return
     database.save_variants(message_id, variants)
-    sample = random.choice(variants)
-    await query.edit_message_text(
-        f"🤖 <b>AI 改写完成！</b>\n\n"
-        f"共生成 <b>{len(variants)}</b> 条变体，随机展示一条：\n\n"
-        f"{sample}",
-        parse_mode="HTML",
-        reply_markup=rewrite_result_keyboard(message_id),
+    await query.answer(
+        f"✅ 已生成 {len(variants)} 条变体！每次发送将随机选择。",
+        show_alert=True,
     )
+    await show_message_detail(query, message_id)
