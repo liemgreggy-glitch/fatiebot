@@ -64,7 +64,9 @@ def _build_message_detail_text(msg: dict, variants: list) -> str:
             preview = variant[:60] + "..." if len(variant) > 60 else variant
             lines.append(f"<b>{idx}.</b> {preview}\n")
     elif msg.get("text"):
-        lines.append(f"\n📝 <b>文字</b>：\n{msg['text']}")
+        lines.append(f"\n📝 <b>文案</b>：\n{msg['text']}")
+    else:
+        lines.append("\n📝 <b>文案</b>：（无）")
 
     image_count = database.get_image_variant_count(msg["id"])
     if image_count:

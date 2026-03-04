@@ -58,8 +58,12 @@ async def confirm_delete_callback(update: Update, context: ContextTypes.DEFAULT_
 async def rewrite_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理 AI 改写回调"""
     query = update.callback_query
-    await query.answer("⏳ 正在 AI 改写...")
     message_id = int(query.data.split("_")[1])
+    msg = database.get_message_by_id(message_id)
+    if not msg or not msg.get("text"):
+        await query.answer("❌ 此消息无文案，无法改写", show_alert=True)
+        return
+    await query.answer("⏳ 正在 AI 改写...")
     await _rewrite_message(query, message_id)
 
 

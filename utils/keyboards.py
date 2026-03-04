@@ -52,7 +52,7 @@ def message_list_keyboard(messages: list, page: int, total: int, page_size: int)
     """消息列表键盘（带分页）"""
     keyboard = []
     for msg in messages:
-        preview = (msg["text"] or "（无文本）")[:30]
+        preview = (msg.get("text") or "（无文案）")[:30]
         keyboard.append(
             [InlineKeyboardButton(
                 f"🔑 {msg['key']} | {preview}",

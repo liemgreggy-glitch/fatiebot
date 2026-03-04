@@ -41,13 +41,37 @@ KEY_BUTTONS = "draft_buttons"
 
 
 async def start_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """进入创建消息流程"""
+    """进入创建消息流程 - 询问是否添加文案"""
     query = update.callback_query
     await query.answer()
     # 清空草稿
     _clear_data(context)
+    await query.edit_message_text(
+        "📝 <b>创建新消息</b>\n\n是否添加文案？",
+        parse_mode="HTML",
+        reply_markup=yes_no_keyboard("add_text_yes", "add_text_no"),
+    )
+    return STATE_TEXT
+
+
+async def ask_text_yes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """用户选择添加文案"""
+    query = update.callback_query
+    await query.answer()
     await query.edit_message_text("✍️ 请发送消息文本内容：")
     return STATE_TEXT
+
+
+async def ask_text_no(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """用户选择跳过文案"""
+    query = update.callback_query
+    await query.answer()
+    context.user_data.pop(KEY_TEXT, None)
+    await query.edit_message_text(
+        "🖼 是否添加图片？",
+        reply_markup=yes_no_keyboard("add_image_yes", "add_image_no"),
+    )
+    return STATE_IMAGE
 
 
 async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -181,17 +205,29 @@ async def receive_buttons(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def _show_preview(msg_or_query, context: ContextTypes.DEFAULT_TYPE) -> int:
     """显示消息预览"""
-    text = context.user_data.get(KEY_TEXT, "（无文本）")
+    text = context.user_data.get(KEY_TEXT)
     file_ids = context.user_data.get(KEY_IMAGE_FILE_IDS)
     buttons_json = context.user_data.get(KEY_BUTTONS)
 
+    # 验证：至少有一项内容
+    if not (text or file_ids or buttons_json):
+        error_msg = "❌ 至少需要添加文案、图片或按钮之一\n\n请重新开始创建"
+        if hasattr(msg_or_query, "edit_message_text"):
+            await msg_or_query.edit_message_text(error_msg, reply_markup=main_menu_keyboard())
+        else:
+            await msg_or_query.reply_text(error_msg, reply_markup=main_menu_keyboard())
+        return ConversationHandler.END
+
     preview_lines = ["📋 <b>消息预览</b>\n"]
-    preview_lines.append(f"📝 文字：{text[:100]}{'...' if len(text) > 100 else ''}")
+    if text:
+        preview_lines.append(f"📝 文字：{text[:100]}{'...' if len(text) > 100 else ''}")
+    else:
+        preview_lines.append("📝 文字：（无）")
     if file_ids:
         preview_lines.append(f"🖼 图片：✅ 已生成 {len(file_ids)} 张变体")
     else:
-        preview_lines.append("🖼 图片：❌ 未添加")
-    preview_lines.append(f"🔘 按钮：{'✅ 已添加' if buttons_json else '❌ 未添加'}")
+        preview_lines.append("🖼 图片：（无）")
+    preview_lines.append(f"🔘 按钮：{'✅ 已添加' if buttons_json else '（无）'}")
 
     preview_text = "\n".join(preview_lines)
     keyboard = create_confirm_keyboard()
@@ -215,6 +251,16 @@ async def save_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     text = context.user_data.get(KEY_TEXT)
     file_ids = context.user_data.get(KEY_IMAGE_FILE_IDS, [])
     buttons = context.user_data.get(KEY_BUTTONS)
+
+    # 再次验证：至少有一项内容
+    if not (text or file_ids or buttons):
+        await query.edit_message_text(
+            "❌ 至少需要添加文案、图片或按钮之一",
+            reply_markup=main_menu_keyboard(),
+        )
+        _clear_data(context)
+        return ConversationHandler.END
+
     key = generate_key()
     msg_id = database.create_message(user_id, key, text, None, buttons)
     if not msg_id:
@@ -229,11 +275,13 @@ async def save_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     for idx, file_id in enumerate(file_ids):
         database.save_image_variant(msg_id, file_id, idx)
 
-    # 生成并保存文案变体
-    await query.edit_message_text("⏳ 正在生成文案变体...")
-    variants = ai_service.generate_text_variants(text, count=10) if text else []
-    for variant in variants:
-        database.add_message_variant(msg_id, variant)
+    # 生成并保存文案变体（仅当有文案时）
+    variants = []
+    if text:
+        await query.edit_message_text("⏳ 正在生成文案变体...")
+        variants = ai_service.generate_text_variants(text, count=10)
+        for variant in variants:
+            database.add_message_variant(msg_id, variant)
 
     await query.edit_message_text(
         f"✅ <b>消息已保存！</b>\n\n"
@@ -299,7 +347,11 @@ async def restart_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     query = update.callback_query
     await query.answer()
     _clear_data(context)
-    await query.edit_message_text("✍️ 请发送消息文本内容：")
+    await query.edit_message_text(
+        "📝 <b>创建新消息</b>\n\n是否添加文案？",
+        parse_mode="HTML",
+        reply_markup=yes_no_keyboard("add_text_yes", "add_text_no"),
+    )
     return STATE_TEXT
 
 
@@ -328,7 +380,11 @@ def create_conversation_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[CallbackQueryHandler(start_create, pattern="^create$")],
         states={
-            STATE_TEXT: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text)],
+            STATE_TEXT: [
+                CallbackQueryHandler(ask_text_yes, pattern="^add_text_yes$"),
+                CallbackQueryHandler(ask_text_no, pattern="^add_text_no$"),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text),
+            ],
             STATE_IMAGE: [
                 CallbackQueryHandler(ask_image_yes, pattern="^add_image_yes$"),
                 CallbackQueryHandler(ask_image_no, pattern="^add_image_no$"),
