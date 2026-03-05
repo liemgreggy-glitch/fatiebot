@@ -23,6 +23,25 @@ from handlers.inline import inline_query
 logger = logging.getLogger(__name__)
 
 
+async def post_init(app: Application) -> None:
+    """机器人初始化后执行：检查 Inline 模式是否已启用"""
+    try:
+        bot_info = await app.bot.get_me()
+        logger.info("🤖 机器人信息:")
+        logger.info("   名称: %s", bot_info.first_name)
+        logger.info("   用户名: @%s", bot_info.username)
+        logger.info(
+            "   Inline 模式: %s",
+            "✅ 已启用" if bot_info.supports_inline_queries else "❌ 未启用",
+        )
+        if not bot_info.supports_inline_queries:
+            logger.warning(
+                "⚠️ Inline 模式未启用！请在 @BotFather 中发送 /setinline 命令开启"
+            )
+    except Exception as e:
+        logger.error("❌ 获取机器人信息失败: %s", e)
+
+
 def main() -> None:
     """启动机器人"""
     config.setup_logging()
@@ -35,7 +54,7 @@ def main() -> None:
     database.init_db()
 
     # 创建 Application
-    app = Application.builder().token(config.BOT_TOKEN).build()
+    app = Application.builder().token(config.BOT_TOKEN).post_init(post_init).build()
 
     # --- 注册 ConversationHandlers（优先级最高，先注册）---
     app.add_handler(create_conversation_handler())
@@ -57,10 +76,11 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(confirm_delete_callback, pattern=r"^confirm_delete_\d+$"))
     app.add_handler(CallbackQueryHandler(rewrite_callback, pattern=r"^rewrite_\d+$"))
 
-    # --- 注册 Inline 查询处理器 ---
+    # --- 注册 Inline 查询处理器（必须在 ConversationHandler 之后）---
     app.add_handler(InlineQueryHandler(inline_query))
 
-    logger.info("机器人启动成功，开始轮询...")
+    logger.info("✅ 所有 Handler 已注册")
+    logger.info("🚀 机器人启动成功，开始轮询...")
     app.run_polling(drop_pending_updates=True)
 
 
