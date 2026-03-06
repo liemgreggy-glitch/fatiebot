@@ -8,6 +8,7 @@ from telegram import (
     Update,
     InlineQueryResultArticle,
     InlineQueryResultCachedPhoto,
+    InlineQueryResultCachedVoice,
     InputTextMessageContent,
 )
 from telegram.ext import ContextTypes
@@ -45,8 +46,22 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             display_text = random.choice(variants) if variants else (msg.get("text") or "")
             reply_markup = parse_buttons(msg.get("buttons"))
             preview = (display_text or "（无文本）")[:100]
+            # 优先展示语音变体
+            voice_variants = database.get_message_voice_variants(msg["id"])
             image_variants = database.get_message_image_variants(msg["id"])
-            if image_variants:
+            if voice_variants:
+                random_voice = random.choice(voice_variants)
+                results.append(
+                    InlineQueryResultCachedVoice(
+                        id=f"voice_{msg['id']}",
+                        voice_file_id=random_voice["file_id"],
+                        title=f"🎤 {msg['key']}",
+                        caption=display_text if display_text else None,
+                        parse_mode="HTML" if display_text else None,
+                        reply_markup=reply_markup,
+                    )
+                )
+            elif image_variants:
                 random_image = random.choice(image_variants)
                 results.append(
                     InlineQueryResultCachedPhoto(
@@ -143,28 +158,54 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if selected_image:
         logger.info("🖼 随机选择图片变体 #%s", selected_image["index"])
 
+    # 随机选择语音变体
+    voice_variants = database.get_message_voice_variants(message["id"])
+    logger.info("🎤 语音变体数量: %s", len(voice_variants))
+    selected_voice = random.choice(voice_variants) if voice_variants else None
+    if selected_voice:
+        logger.info("🎤 随机选择语音变体 #%s", selected_voice["index"])
+
     # 解析按钮
     reply_markup = parse_buttons(message.get("buttons"))
 
     results = []
 
-    if selected_image:
-        logger.info("📤 构建图片消息")
+    # 选项 1: 🎤 语音消息（优先）
+    if selected_voice:
+        logger.info("📤 构建语音消息")
         results.append(
-            InlineQueryResultCachedPhoto(
-                id=str(message["id"]),
-                photo_file_id=selected_image["file_id"],
+            InlineQueryResultCachedVoice(
+                id=f"voice_{message['id']}",
+                voice_file_id=selected_voice["file_id"],
+                title=f"🎤 发送语音: {query_text}",
                 caption=display_text if display_text else None,
                 parse_mode="HTML" if display_text else None,
                 reply_markup=reply_markup,
             )
         )
-    elif display_text:
+
+    # 选项 2: 📷 图片消息
+    if selected_image:
+        logger.info("📤 构建图片消息")
+        results.append(
+            InlineQueryResultCachedPhoto(
+                id=f"image_{message['id']}",
+                photo_file_id=selected_image["file_id"],
+                title=f"📷 发送图片: {query_text}",
+                description=display_text[:100] if display_text else "（纯图片）",
+                caption=display_text if display_text else None,
+                parse_mode="HTML" if display_text else None,
+                reply_markup=reply_markup,
+            )
+        )
+
+    # 选项 3: 📝 文字消息
+    if display_text:
         logger.info("📤 构建文本消息")
         results.append(
             InlineQueryResultArticle(
-                id=str(message["id"]),
-                title=f"📤 发送: {query_text}",
+                id=f"text_{message['id']}",
+                title=f"📝 发送文字: {query_text}",
                 description=display_text[:100],
                 input_message_content=InputTextMessageContent(
                     message_text=display_text,
@@ -173,8 +214,9 @@ async def inline_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                 reply_markup=reply_markup,
             )
         )
-    else:
-        logger.warning("⚠️ 消息无内容（无文案、无图片）")
+
+    if not results:
+        logger.warning("⚠️ 消息无内容（无文案、无图片、无语音）")
         results.append(
             InlineQueryResultArticle(
                 id=str(message["id"]),
