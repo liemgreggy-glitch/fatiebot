@@ -3,7 +3,7 @@
 import logging
 from typing import Optional
 
-from telegram import Update, Message
+from telegram import Update, Message, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes,
     ConversationHandler,
@@ -28,16 +28,22 @@ logger = logging.getLogger(__name__)
 # 对话状态
 (
     STATE_TEXT,
+    STATE_GENERATE_VOICE,
     STATE_IMAGE,
     STATE_BUTTONS,
     STATE_CONFIRM,
-) = range(4)
+) = range(5)
 
 # context.user_data 键名
 KEY_TEXT = "draft_text"
+KEY_TEXT_VARIANTS = "draft_text_variants"
+KEY_VOICE_INFOS = "draft_voice_infos"
 KEY_IMAGE = "draft_image"
 KEY_IMAGE_FILE_IDS = "draft_image_file_ids"
 KEY_BUTTONS = "draft_buttons"
+
+# 语音生成最低要求数量
+MIN_VOICE_VARIANTS = 3
 
 
 async def start_create(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -82,7 +88,131 @@ async def receive_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
         await update.message.reply_text(f"❌ {err}\n请重新发送消息文本：")
         return STATE_TEXT
     context.user_data[KEY_TEXT] = text
+
+    # 询问是否生成语音
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("🎤 生成语音", callback_data="voice_yes"),
+                InlineKeyboardButton("⏭️ 跳过", callback_data="voice_no"),
+            ]
+        ]
+    )
     await update.message.reply_text(
+        "🎤 <b>是否为文案生成 AI 语音？</b>\n\n"
+        "✨ <b>功能说明：</b>\n"
+        "• 自动生成 10 条文案变体\n"
+        "• 为每条文案生成不同音色的语音\n"
+        "• 发送时随机选择，增加多样性\n\n"
+        "⏱ <b>预计时间：</b> 30-60 秒\n"
+        "💰 <b>费用：</b> 完全免费",
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
+    return STATE_GENERATE_VOICE
+
+
+async def generate_voice_yes(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """用户选择生成语音"""
+    query = update.callback_query
+    await query.answer()
+
+    text = context.user_data.get(KEY_TEXT)
+    user_id = query.from_user.id
+
+    progress_msg = await query.edit_message_text(
+        "⏳ <b>AI 正在生成...</b>\n\n"
+        "📝 生成文案变体... ⏳\n"
+        "🎤 生成语音变体... 等待中",
+        parse_mode="HTML",
+    )
+
+    # 生成文案变体
+    text_variants = ai_service.generate_text_variants(text, count=10)
+
+    if not text_variants or len(text_variants) < MIN_VOICE_VARIANTS:
+        await progress_msg.edit_text(
+            "❌ 文案生成失败，已跳过语音生成",
+            reply_markup=yes_no_keyboard("add_image_yes", "add_image_no"),
+        )
+        return STATE_IMAGE
+
+    # 更新进度
+    await progress_msg.edit_text(
+        "⏳ <b>AI 正在生成...</b>\n\n"
+        f"📝 生成文案变体... ✅ ({len(text_variants)} 条)\n"
+        "🎤 生成语音变体... 0/10",
+        parse_mode="HTML",
+    )
+
+    # 定义进度回调
+    async def update_progress(current, total):
+        try:
+            await progress_msg.edit_text(
+                "⏳ <b>AI 正在生成...</b>\n\n"
+                f"📝 生成文案变体... ✅ ({len(text_variants)} 条)\n"
+                f"🎤 生成语音变体... {current}/{total}",
+                parse_mode="HTML",
+            )
+        except Exception:
+            pass
+
+    # 生成并上传语音
+    from utils.voice_processor import generate_and_upload_voices
+
+    voice_infos = await generate_and_upload_voices(
+        context.bot,
+        user_id,
+        text_variants,
+        progress_callback=update_progress,
+    )
+
+    if not voice_infos or len(voice_infos) < MIN_VOICE_VARIANTS:
+        await progress_msg.edit_text(
+            "❌ 语音生成失败，请检查网络后重试\n\n🖼 是否继续添加图片？",
+            reply_markup=yes_no_keyboard("add_image_yes", "add_image_no"),
+        )
+        return STATE_IMAGE
+
+    # 保存到 context
+    context.user_data[KEY_TEXT_VARIANTS] = text_variants
+    context.user_data[KEY_VOICE_INFOS] = voice_infos
+
+    # 成功提示
+    await progress_msg.edit_text(
+        f"✅ <b>生成完成！</b>\n\n"
+        f"📝 文案变体：{len(text_variants)} 条\n"
+        f"🎤 语音变体：{len(voice_infos)} 条\n\n"
+        f"💡 <b>示例文案：</b>\n{text_variants[0][:80]}...",
+        parse_mode="HTML",
+    )
+
+    # 发送试听语音
+    await context.bot.send_voice(
+        chat_id=user_id,
+        voice=voice_infos[0]["file_id"],
+        caption=f"🎧 <b>试听：语音变体 #1</b>\n\n{text_variants[0][:200]}",
+        parse_mode="HTML",
+    )
+
+    # 继续流程：询问是否添加图片
+    await context.bot.send_message(
+        chat_id=user_id,
+        text="🖼 是否添加图片？",
+        reply_markup=yes_no_keyboard("add_image_yes", "add_image_no"),
+    )
+    return STATE_IMAGE
+
+
+async def generate_voice_no(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """用户选择跳过语音"""
+    query = update.callback_query
+    await query.answer()
+
+    context.user_data.pop(KEY_VOICE_INFOS, None)
+    context.user_data.pop(KEY_TEXT_VARIANTS, None)
+
+    await query.edit_message_text(
         "🖼 是否添加图片？",
         reply_markup=yes_no_keyboard("add_image_yes", "add_image_no"),
     )
@@ -249,6 +379,8 @@ async def save_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     await query.answer()
     user_id = query.from_user.id
     text = context.user_data.get(KEY_TEXT)
+    text_variants = context.user_data.get(KEY_TEXT_VARIANTS, [])
+    voice_infos = context.user_data.get(KEY_VOICE_INFOS, [])
     file_ids = context.user_data.get(KEY_IMAGE_FILE_IDS, [])
     buttons = context.user_data.get(KEY_BUTTONS)
 
@@ -275,18 +407,30 @@ async def save_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
     for idx, file_id in enumerate(file_ids):
         database.save_image_variant(msg_id, file_id, idx)
 
-    # 生成并保存文案变体（仅当有文案时）
-    variants = []
-    if text:
+    # 保存文案变体：优先使用已生成的，否则现在生成
+    if text_variants:
+        for variant in text_variants:
+            database.add_message_variant(msg_id, variant)
+        variants = text_variants
+    elif text:
         await query.edit_message_text("⏳ 正在生成文案变体...")
         variants = ai_service.generate_text_variants(text, count=10)
         for variant in variants:
             database.add_message_variant(msg_id, variant)
+    else:
+        variants = []
+
+    # 保存语音变体
+    for info in voice_infos:
+        database.save_voice_variant(
+            msg_id, info["file_id"], info["index"], info.get("duration", 0)
+        )
 
     await query.edit_message_text(
         f"✅ <b>消息已保存！</b>\n\n"
         f"🔑 密钥：<code>{key}</code>\n"
         f"📝 文案变体：{len(variants)} 条\n"
+        f"🎤 语音变体：{len(voice_infos)} 条\n"
         f"🖼 图片变体：{len(file_ids)} 张\n\n"
         f"💡 在任意聊天中输入 @机器人用户名 {key} 即可发送此消息。",
         parse_mode="HTML",
@@ -370,6 +514,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
 def _clear_data(context: ContextTypes.DEFAULT_TYPE) -> None:
     """清空创建草稿数据"""
     context.user_data.pop(KEY_TEXT, None)
+    context.user_data.pop(KEY_TEXT_VARIANTS, None)
+    context.user_data.pop(KEY_VOICE_INFOS, None)
     context.user_data.pop(KEY_IMAGE, None)
     context.user_data.pop(KEY_IMAGE_FILE_IDS, None)
     context.user_data.pop(KEY_BUTTONS, None)
@@ -384,6 +530,10 @@ def create_conversation_handler() -> ConversationHandler:
                 CallbackQueryHandler(ask_text_yes, pattern="^add_text_yes$"),
                 CallbackQueryHandler(ask_text_no, pattern="^add_text_no$"),
                 MessageHandler(filters.TEXT & ~filters.COMMAND, receive_text),
+            ],
+            STATE_GENERATE_VOICE: [
+                CallbackQueryHandler(generate_voice_yes, pattern="^voice_yes$"),
+                CallbackQueryHandler(generate_voice_no, pattern="^voice_no$"),
             ],
             STATE_IMAGE: [
                 CallbackQueryHandler(ask_image_yes, pattern="^add_image_yes$"),

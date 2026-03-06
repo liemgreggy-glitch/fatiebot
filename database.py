@@ -54,6 +54,18 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_message_images ON message_images(message_id);
+
+            CREATE TABLE IF NOT EXISTS message_voices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id INTEGER NOT NULL,
+                file_id TEXT NOT NULL,
+                variant_index INTEGER NOT NULL,
+                duration INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_message_voices ON message_voices(message_id);
         """)
     logger.info("数据库初始化完成")
 
@@ -320,4 +332,55 @@ def get_image_variant_count(message_id: int) -> int:
             return row["cnt"] if row else 0
     except sqlite3.Error as e:
         logger.error("获取图片数量失败：%s", e)
+        return 0
+
+
+def save_voice_variant(
+    message_id: int, file_id: str, variant_index: int, duration: int = 0
+) -> bool:
+    """保存单条语音变体"""
+    try:
+        with get_connection() as conn:
+            conn.execute(
+                "INSERT INTO message_voices (message_id, file_id, variant_index, duration) VALUES (?, ?, ?, ?)",
+                (message_id, file_id, variant_index, duration),
+            )
+        return True
+    except sqlite3.Error as e:
+        logger.error("保存语音变体失败：%s", e)
+        return False
+
+
+def get_message_voice_variants(message_id: int) -> List[Dict[str, Any]]:
+    """获取消息的所有语音变体"""
+    try:
+        with get_connection() as conn:
+            rows = conn.execute(
+                "SELECT file_id, variant_index, duration FROM message_voices WHERE message_id = ? ORDER BY variant_index",
+                (message_id,),
+            ).fetchall()
+            return [
+                {
+                    "file_id": row["file_id"],
+                    "index": row["variant_index"],
+                    "duration": row["duration"],
+                }
+                for row in rows
+            ]
+    except sqlite3.Error as e:
+        logger.error("获取语音变体失败：%s", e)
+        return []
+
+
+def get_voice_variant_count(message_id: int) -> int:
+    """获取语音变体数量"""
+    try:
+        with get_connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM message_voices WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+            return row["cnt"] if row else 0
+    except sqlite3.Error as e:
+        logger.error("获取语音数量失败：%s", e)
         return 0

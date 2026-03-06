@@ -68,6 +68,10 @@ def _build_message_detail_text(msg: dict, variants: list) -> str:
     else:
         lines.append("\n📝 <b>文案</b>：（无）")
 
+    voice_count = database.get_voice_variant_count(msg["id"])
+    if voice_count:
+        lines.append(f"\n🎤 <b>语音变体</b>：{voice_count} 条")
+
     image_count = database.get_image_variant_count(msg["id"])
     if image_count:
         lines.append(f"\n🖼 <b>图片变体</b>：{image_count} 张")
