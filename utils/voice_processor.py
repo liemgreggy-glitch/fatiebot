@@ -1,47 +1,86 @@
-"""AI 语音生成模块 - 使用 OpenAI TTS（语音消息格式）"""
+"""AI 语音生成模块 - Fish Audio TTS（3个中文甜美女声随机切换）"""
 
-from openai import OpenAI
+import requests
 import logging
 import os
 import random
+import time
 from typing import List, Optional
 from telegram import Bot
-from pydub import AudioSegment
 
 logger = logging.getLogger(__name__)
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-VOICES = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+# Fish Audio 配置
+FISH_API_KEY = os.getenv("FISH_API_KEY")
+FISH_API_URL = "https://api.fish.audio/v1/tts"
+
+# 🎀 Fish Audio 中文甜美女声（3个随机切换）
+FISH_VOICES = [
+    {
+        "reference_id": "fbe02f8306fc4d3d915e9871722a39d5",
+        "name": "甜美女声1",
+        "desc": "年轻活泼"
+    },
+    {
+        "reference_id": "f82e3885ac22468eb6c773b96f2c5752",
+        "name": "甜美女声2",
+        "desc": "温柔可爱"
+    },
+    {
+        "reference_id": "5c353fdb312f4888836a9a5680099ef0",
+        "name": "甜美女声3",
+        "desc": "甜美萝莉"
+    },
+]
 
 
-def generate_voice(text: str, output_path: str, voice: str = None) -> bool:
-    """生成单条语音（使用 OpenAI TTS）"""
+def generate_voice(text: str, output_path: str, voice_config: dict = None) -> bool:
+    """生成单条语音（Fish Audio）"""
     try:
-        if not OPENAI_API_KEY:
-            logger.error("❌ 未配置 OPENAI_API_KEY")
+        if not FISH_API_KEY:
+            logger.error("❌ 未配置 FISH_API_KEY")
             return False
         
-        if not voice:
-            voice = random.choice(VOICES)
+        if not voice_config:
+            voice_config = random.choice(FISH_VOICES)
         
-        logger.info(f"🎤 生成语音: {text[:30]}... (音色: {voice})")
+        logger.info(f"🎤 生成语音: {text[:30]}... ({voice_config['name']} - {voice_config['desc']})")
         
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        # 构建请求
+        headers = {
+            "Authorization": f"Bearer {FISH_API_KEY}",
+            "Content-Type": "application/json"
+        }
         
-        response = client.audio.speech.create(
-            model="tts-1",
-            voice=voice,
-            input=text,
-            speed=1.0,
-            response_format="mp3"  # 确保是 mp3 格式
+        payload = {
+            "text": text,
+            "reference_id": voice_config["reference_id"],
+            "format": "mp3",
+            "mp3_bitrate": 128,
+            "normalize": True,
+            "latency": "normal"
+        }
+        
+        # 发送请求
+        response = requests.post(
+            FISH_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=30
         )
         
-        response.stream_to_file(output_path)
-        
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            logger.info(f"✅ 语音生成成功: {os.path.getsize(output_path)} bytes")
+        if response.status_code == 200:
+            # 保存音频
+            with open(output_path, 'wb') as f:
+                f.write(response.content)
+            
+            file_size = os.path.getsize(output_path)
+            logger.info(f"✅ Fish Audio 语音生成成功 ({file_size} 字节)")
             return True
-        return False
+        else:
+            logger.error(f"❌ Fish Audio API 错误: {response.status_code}")
+            logger.error(f"   响应: {response.text}")
+            return False
             
     except Exception as e:
         logger.error(f"❌ 语音生成失败: {e}")
@@ -53,76 +92,58 @@ def generate_voice_variants(text_variants: List[str], temp_dir: str = "/tmp/voic
     os.makedirs(temp_dir, exist_ok=True)
     voice_files = []
     
-    total_chars = sum(len(text) for text in text_variants)
-    estimated_cost = (total_chars / 1_000_000) * 15
-    logger.info(f"💰 预计消费: ${estimated_cost:.4f} (约 ¥{estimated_cost * 7.2:.2f})")
+    logger.info(f"🎀 使用 Fish Audio 中文甜美女声: {len(FISH_VOICES)} 种（随机切换）")
     
     for i, text in enumerate(text_variants):
         output_path = os.path.join(temp_dir, f"voice_{i}_{random.randint(1000, 9999)}.mp3")
-        voice = VOICES[i % len(VOICES)]
+        voice_config = FISH_VOICES[i % len(FISH_VOICES)]
         
-        if generate_voice(text, output_path, voice):
+        logger.info(f"📝 第 {i+1} 条使用: {voice_config['name']} ({voice_config['desc']})")
+        
+        if generate_voice(text, output_path, voice_config):
             voice_files.append(output_path)
+            time.sleep(0.5)  # 避免请求过快
         else:
-            logger.warning(f"⚠️ 语音 {i} 生成失败，跳过")
+            logger.warning(f"⚠️  第 {i+1} 条生成失败，跳过")
     
     logger.info(f"✅ 共生成 {len(voice_files)}/{len(text_variants)} 条语音")
     return voice_files
 
 
 async def upload_voice_to_telegram(bot: Bot, chat_id: int, voice_path: str, caption: str = None) -> Optional[dict]:
-    """上传语音到 Telegram（尝试语音消息格式）"""
+    """上传语音到 Telegram"""
     try:
-        # 先尝试 send_voice（语音消息格式）
         try:
             with open(voice_path, 'rb') as voice_file:
-                message = await bot.send_voice(
-                    chat_id=chat_id,
-                    voice=voice_file,
-                    caption=None  # 不显示标题
-                )
-                
+                message = await bot.send_voice(chat_id=chat_id, voice=voice_file)
                 file_id = message.voice.file_id
                 duration = message.voice.duration
                 await message.delete()
-                
-                logger.info(f"✅ 语音消息已上传（voice 格式），时长: {duration}秒")
+                logger.info(f"✅ 语音已上传到 Telegram (file_id: {file_id[:20]}..., {duration}秒)")
                 return {"file_id": file_id, "duration": duration}
-        
         except Exception as voice_error:
-            # 如果 send_voice 失败，尝试 send_audio
-            logger.warning(f"⚠️ send_voice 失败: {voice_error}，尝试 send_audio...")
-            
+            logger.warning(f"⚠️  语音格式上传失败，尝试音频格式: {voice_error}")
             with open(voice_path, 'rb') as audio_file:
-                message = await bot.send_audio(
-                    chat_id=chat_id,
-                    audio=audio_file,
-                    title="",  # 空标题
-                    performer="",  # 空演唱者
-                    caption=None
-                )
-                
+                message = await bot.send_audio(chat_id=chat_id, audio=audio_file)
                 file_id = message.audio.file_id
                 duration = message.audio.duration
                 await message.delete()
-                
-                logger.info(f"✅ 音频已上传（audio 格式），时长: {duration}秒")
+                logger.info(f"✅ 音频已上传到 Telegram (file_id: {file_id[:20]}..., {duration}秒)")
                 return {"file_id": file_id, "duration": duration}
-                
     except Exception as e:
-        logger.error(f"❌ 语音上传失败: {e}")
+        logger.error(f"❌ 上传到 Telegram 失败: {e}")
         return None
 
 
 async def generate_and_upload_voices(bot: Bot, chat_id: int, text_variants: List[str], progress_callback=None) -> List[dict]:
     """生成语音变体并上传到 Telegram"""
-    logger.info(f"🎤 开始生成 {len(text_variants)} 条语音变体（OpenAI TTS）...")
+    logger.info(f"🎤 开始生成 {len(text_variants)} 条语音（Fish Audio 中文甜美女声，3种随机切换）...")
     
     temp_dir = f"/tmp/voices_{chat_id}_{random.randint(1000, 9999)}"
     voice_files = generate_voice_variants(text_variants, temp_dir)
     
     if not voice_files:
-        logger.error("❌ 所有语音生成失败")
+        logger.error("❌ 没有生成任何语音文件")
         return []
     
     voice_infos = []
@@ -138,15 +159,17 @@ async def generate_and_upload_voices(bot: Bot, chat_id: int, text_variants: List
                 "index": i
             })
         
+        # 删除临时文件
         try:
             os.remove(voice_path)
-        except:
-            pass
+        except Exception as e:
+            logger.warning(f"⚠️  删除临时文件失败: {e}")
     
+    # 删除临时目录
     try:
         os.rmdir(temp_dir)
-    except:
-        pass
+    except Exception as e:
+        logger.warning(f"⚠️  删除临时目录失败: {e}")
     
-    logger.info(f"✅ 完成！成功上传 {len(voice_infos)} 条语音")
+    logger.info(f"✅ 完成！成功上传 {len(voice_infos)}/{len(text_variants)} 条语音到 Telegram")
     return voice_infos
